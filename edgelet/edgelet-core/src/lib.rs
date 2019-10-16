@@ -41,12 +41,15 @@ pub use module::{
 };
 pub use network::{Ipam, IpamConfig, MobyNetwork, Network};
 pub use settings::{
-    AttestationMethod, Certificates, Connect, Dps, Listen, Manual,
-    ParseManualDeviceConnectionStringError, Provisioning, RetryLimit, RuntimeSettings, Settings,
-    SymmetricKeyAttestationInfo, TpmAttestationInfo, WatchdogSettings, X509AttestationInfo,
-    DEFAULT_CONNECTION_STRING,
+    AttestationMethod, Certificates, Connect, Dps, External, Listen, Manual, ManualAuthMethod,
+    ManualDeviceConnectionString, ManualX509Auth, Provisioning, RetryLimit, RuntimeSettings,
+    Settings, SymmetricKeyAttestationInfo, TpmAttestationInfo, WatchdogSettings,
+    X509AttestationInfo,
 };
 pub use workload::WorkloadConfig;
+
+/// This is the default auto generated certificate life
+pub const DEFAULT_AUTO_GENERATED_CA_LIFETIME_DAYS: u16 = 90;
 
 lazy_static! {
     static ref VERSION: &'static str =

@@ -8,6 +8,9 @@ namespace Microsoft.Azure.Devices.Edge.Hub.Core.Routing
     using System.Linq;
     using System.Threading;
     using System.Threading.Tasks;
+    using App.Metrics;
+    using App.Metrics.Counter;
+    using App.Metrics.Timer;
     using Microsoft.Azure.Devices.Client.Exceptions;
     using Microsoft.Azure.Devices.Edge.Hub.Core.Cloud;
     using Microsoft.Azure.Devices.Edge.Util;
@@ -157,8 +160,8 @@ namespace Microsoft.Azure.Devices.Edge.Hub.Core.Routing
                         succeeded.AddRange(res.Succeeded);
                         failed.AddRange(res.Failed);
                         invalid.AddRange(res.InvalidDetailsList);
-                        // Different branches could have different results, but only the first one will be reported
-                        if (!sendFailureDetails.HasValue)
+                        // Different branches could have different results, but only the most significant will be reported
+                        if (IsMoreSignificant(sendFailureDetails, res.SendFailureDetails))
                         {
                             sendFailureDetails = res.SendFailureDetails;
                         }
@@ -191,7 +194,11 @@ namespace Microsoft.Azure.Devices.Edge.Hub.Core.Routing
                     succeeded.AddRange(res.Succeeded);
                     failed.AddRange(res.Failed);
                     invalid.AddRange(res.InvalidDetailsList);
-                    sendFailureDetails = res.SendFailureDetails;
+
+                    if (IsMoreSignificant(sendFailureDetails, res.SendFailureDetails))
+                    {
+                        sendFailureDetails = res.SendFailureDetails;
+                    }
                 }
 
                 return new SinkResult<IRoutingMessage>(
@@ -199,6 +206,33 @@ namespace Microsoft.Azure.Devices.Edge.Hub.Core.Routing
                     failed,
                     invalid,
                     sendFailureDetails.GetOrElse(default(SendFailureDetails)));
+            }
+
+            static bool IsMoreSignificant(Option<SendFailureDetails> baseDetails, Option<SendFailureDetails> currentDetails)
+            {
+                // whatever happend before, if no details now, that cannot be more significant
+                if (currentDetails == Option.None<SendFailureDetails>())
+                    return false;
+
+                // if something wrong happened now, but nothing before, then that is more significant
+                if (baseDetails == Option.None<SendFailureDetails>())
+                    return true;
+
+                // at this point something has happened before, as well as now. Pick the more significant
+                var baseUnwrapped = baseDetails.Expect(ThrowBadProgramLogic);
+                var currentUnwrapped = currentDetails.Expect(ThrowBadProgramLogic);
+
+                // in theory this case is represened by Option.None and handled earlier, but let's check it just for sure
+                if (currentUnwrapped.FailureKind == FailureKind.None)
+                    return false;
+
+                // Transient beats non-transient
+                if (baseUnwrapped.FailureKind != FailureKind.Transient && currentUnwrapped.FailureKind == FailureKind.Transient)
+                    return true;
+
+                return false;
+
+                InvalidOperationException ThrowBadProgramLogic() => new InvalidOperationException("Error in program logic, uwrapped Option<T> should have had value");
             }
 
             async Task<ISinkResult<IRoutingMessage>> ProcessClientMessagesBatch(string id, List<IRoutingMessage> routingMessages, CancellationToken token)
@@ -223,14 +257,19 @@ namespace Microsoft.Azure.Devices.Edge.Hub.Core.Routing
                                 .Select(r => this.cloudEndpoint.messageConverter.ToMessage(r))
                                 .ToList();
 
-                            if (messages.Count == 1)
+                            using (MetricsV0.CloudLatency(id))
                             {
-                                await cp.SendMessageAsync(messages[0]);
+                                if (messages.Count == 1)
+                                {
+                                    await cp.SendMessageAsync(messages[0]);
+                                }
+                                else
+                                {
+                                    await cp.SendMessageBatchAsync(messages);
+                                }
                             }
-                            else
-                            {
-                                await cp.SendMessageBatchAsync(messages);
-                            }
+
+                            MetricsV0.MessageCount(id, messages.Count);
 
                             return new SinkResult<IRoutingMessage>(routingMessages);
                         }
@@ -363,6 +402,35 @@ namespace Microsoft.Azure.Devices.Edge.Hub.Core.Routing
             internal static void InvalidMessage(string id, Exception ex)
             {
                 Log.LogWarning((int)EventIds.InvalidMessage, ex, Invariant($"Non retryable exception occurred while sending message for client {id}."));
+            }
+        }
+
+        static class MetricsV0
+        {
+            static readonly CounterOptions EdgeHubToCloudMessageCountOptions = new CounterOptions
+            {
+                Name = "EdgeHubToCloudMessageSentCount",
+                MeasurementUnit = Unit.Events,
+                ResetOnReporting = true,
+            };
+
+            static readonly TimerOptions EdgeHubToCloudMessageLatencyOptions = new TimerOptions
+            {
+                Name = "EdgeHubToCloudMessageLatencyMs",
+                MeasurementUnit = Unit.None,
+                DurationUnit = TimeUnit.Milliseconds,
+                RateUnit = TimeUnit.Seconds
+            };
+
+            public static void MessageCount(string identity, int count)
+                => Util.Metrics.MetricsV0.CountIncrement(GetTags(identity), EdgeHubToCloudMessageCountOptions, count);
+
+            public static IDisposable CloudLatency(string identity)
+                => Util.Metrics.MetricsV0.Latency(GetTags(identity), EdgeHubToCloudMessageLatencyOptions);
+
+            static MetricTags GetTags(string id)
+            {
+                return new MetricTags("DeviceId", id);
             }
         }
     }

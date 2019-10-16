@@ -10,31 +10,30 @@ namespace MessagesAnalyzer
     [JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
     class ModuleDmReport
     {
-        public ModuleDmReport(string moduleId, IDictionary<string, IList<DirectMethodStatus>> statusCodes)
+        public ModuleDmReport(string moduleId, IDictionary<string, Tuple<int, DateTime>> statusCodes)
         {
             this.ModuleId = moduleId;
-            this.StatusCodes = new List<DmStatusReport>();
-            foreach (KeyValuePair<string, IList<DirectMethodStatus>> status in statusCodes)
+            this.Statuses = new List<DmStatusReport>();
+            foreach (KeyValuePair<string, Tuple<int, DateTime>> status in statusCodes)
             {
-                this.StatusCodes.Add(new DmStatusReport()
+                this.Statuses.Add(new DmStatusReport()
                 {
                     StatusCode = status.Key,
-                    Count = status.Value.Count,
-                    LastReceivedAt = status.Value.Last().EnqueuedDateTime
+                    Count = status.Value.Item1,
+                    LastReceivedAt = status.Value.Item2
                 });
             } 
         }
 
         public string ModuleId { get; }
 
-        public IList<DmStatusReport> StatusCodes { get; }
+        public IList<DmStatusReport> Statuses { get; }
 
         public override string ToString()
         {
             return JsonConvert.SerializeObject(this, Formatting.Indented);
         }
 
-        [JsonObject(NamingStrategyType = typeof(CamelCaseNamingStrategy))]
         public class DmStatusReport
         {
             public string StatusCode { get; set; }
